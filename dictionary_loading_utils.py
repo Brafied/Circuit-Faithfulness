@@ -7,6 +7,8 @@ import torch as t
 from huggingface_hub import list_repo_files
 from tqdm import tqdm
 import os
+from single_layer_transcoder import load_transcoder_set
+
 DICT_DIR = os.path.dirname(os.path.abspath(__file__)) + "/dictionaries"
 
 DictionaryStash = namedtuple("DictionaryStash", ["embed", "attns", "mlps", "resids"])
@@ -212,3 +214,36 @@ def load_saes_and_submodules(
         return _load_gemma_saes_and_submodules(model, thru_layer=thru_layer, separate_by_type=separate_by_type, include_embed=include_embed, neurons=neurons, dtype=dtype, device=device)
     else:
         raise ValueError(f"Model {model_name} not supported")
+    
+def load_gemma_transcoders_and_submodules(
+    model,
+    dtype: t.dtype = t.float32,
+    device: t.device = t.device("cpu"),
+):
+    transcoders, _, _, _ = load_transcoder_set(
+        'gemma',
+        device=device,
+        dtype=dtype
+    )
+    
+    mlps = []
+    dictionaries = {}
+
+    for i, layer in tqdm(enumerate(model.model.layers), total=len(model.model.layers)+1, desc="Loading Gemma transcoders"):
+        mlps.append(
+            mlp := (
+                Submodule(
+                    name=f"mlp_{i}_in",
+                    submodule=layer.mlp,
+                    use_input=True
+                ),
+                Submodule(
+                    name=f"mlp_{i}_out",
+                    submodule=layer.mlp,
+                    use_input=False
+                )
+            )
+        )
+        dictionaries[mlp] = transcoders[i]
+
+    return mlps, dictionaries
